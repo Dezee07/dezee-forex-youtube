@@ -7,6 +7,7 @@ All content is professional English only.
 import anthropic
 import json
 import os
+import random
 import sys
 from datetime import date, datetime
 
@@ -30,6 +31,16 @@ HOOKS = [
     "Smart money is quietly doing the opposite.",
     "Retail traders are making this mistake right now.",
     "This one concept separates profitable traders from losing ones.",
+    "Commercials are buying while fundamentals turn bullish.",
+    "Retail traders missed the macro shift.",
+    "Open Interest just confirmed institutional accumulation.",
+    "This fundamental change could fuel Gold higher for months.",
+    "Why hedge funds are trapped against smart money.",
+    "Seasonality and COT now align perfectly.",
+    "This is how institutions build massive positions.",
+    "The Dollar trend is changing because of this.",
+    "Commercials positioned early again.",
+    "Why this move could continue for weeks.",
 ]
 
 CTAS = [
@@ -39,6 +50,24 @@ CTAS = [
     "Follow to trade like institutions, not retail.",
     "Subscribe for daily smart money insights.",
     "Follow for more lessons the banks don't want you to know.",
+    "Drop a comment — what market are you watching right now?",
+    "Share this with a trader who needs to see it.",
+    "Follow for the edge retail traders will never have.",
+]
+
+VIRAL_TITLE_PREFIXES = [
+    "Commercials Just Turned Bullish on",
+    "Retail Traders Are Trapped Again —",
+    "This Signal Changes Everything About",
+    "Why Smart Money Is Buying",
+    "The Real Reason",
+    "Institutions Saw This Move Early —",
+    "COT Report Reveals Hidden Truth About",
+    "Why Fundamentals Matter More Than Indicators —",
+    "How Banks Really Trade",
+    "This Is Why Most Traders Lose —",
+    "Smart Money Just Did This on",
+    "Open Interest Just Revealed",
 ]
 
 
@@ -48,12 +77,24 @@ def load_topics() -> list:
 
 
 def pick_topics_for_today(topics: list, count: int = 3) -> list:
-    day_number = (date.today() - date(2024, 1, 1)).days
+    # Seed by date so each day is different but reproducible if re-run
+    day_seed = (date.today() - date(2024, 1, 1)).days
+    rng = random.Random(day_seed)
+
+    # Split into old (0-199) and new (200+) topics
+    old_topics = [(i, t) for i, t in enumerate(topics) if i < 200]
+    new_topics = [(i, t) for i, t in enumerate(topics) if i >= 200]
+
+    # Always mix: ~2 from old, ~1 from new (or all old if new list short)
     selected = []
-    for i in range(count):
-        idx = (day_number * count + i) % len(topics)
-        selected.append((idx, topics[idx]))
-    return selected
+    if new_topics and count >= 2:
+        selected += rng.sample(old_topics, min(count - 1, len(old_topics)))
+        selected += rng.sample(new_topics, min(1, len(new_topics)))
+    else:
+        selected = rng.sample(old_topics, min(count, len(old_topics)))
+
+    rng.shuffle(selected)
+    return selected[:count]
 
 
 def generate_short_script(client: anthropic.Anthropic, topic: str, hook: str, cta: str) -> str:
@@ -74,10 +115,16 @@ HOOK (already provided, use this exactly): "{hook}"
 STRUCTURE TO FOLLOW:
 HOOK: [use the hook provided]
 PROBLEM: [1-2 sentences — what mistake retail traders make related to this topic]
-INSIGHT: [1-2 sentences — what smart money / commercials actually do]
-EXPLANATION: [2-3 sentences — simple explanation of the concept]
-LESSON: [1 sentence — the key takeaway]
+INSIGHT: [1-2 sentences — what smart money / commercials / institutions actually do differently]
+EXPLANATION: [2-3 sentences — simple, clear explanation of the concept — if the topic involves seasonality, fundamentals, open interest or macro, explain those specifically]
+LESSON: [1 sentence — the single most important takeaway]
 CTA: "{cta}"
+
+ADDITIONAL GUIDANCE BY TOPIC TYPE:
+- Seasonality topics: explain the seasonal pattern, why it happens, how institutions exploit it
+- Fundamentals topics: explain the economic concept simply, link it to currency/market direction
+- Open Interest topics: explain what OI rising/falling means for trend strength
+- Macro + COT topics: explain how fundamentals and positioning work together
 
 Write the full script now. No labels, no headers — just the flowing script as it would be spoken aloud."""
 
@@ -111,15 +158,12 @@ Keep it short and punchy."""
     return message.content[0].text.strip()
 
 
-def generate_video_title(topic: str) -> str:
-    """Generate a short punchy title for the Short."""
-    prefixes = [
-        "Why ", "How ", "The Truth About ", "What ", "This Is Why ",
-        "Institutions Know ", "Smart Money: ", "Stop Ignoring "
-    ]
-    day = (date.today() - date(2024, 1, 1)).days
-    prefix = prefixes[day % len(prefixes)]
-    title = f"{prefix}{topic} #Shorts"
+def generate_video_title(topic: str, seed: int = 0) -> str:
+    rng = random.Random(seed)
+    prefix = rng.choice(VIRAL_TITLE_PREFIXES)
+    # Shorten topic if needed
+    short_topic = topic[:50] if len(topic) > 50 else topic
+    title = f"{prefix} {short_topic} #Shorts"
     return title[:100]
 
 
@@ -147,7 +191,7 @@ def main():
 
         script  = generate_short_script(client, topic, hook, cta)
         caption = generate_caption(client, topic, script)
-        title   = generate_video_title(topic)
+        title   = generate_video_title(topic, seed=day + i * 7)
 
         shorts.append({
             "index":      i + 1,
