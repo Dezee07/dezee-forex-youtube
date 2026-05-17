@@ -1,128 +1,78 @@
 """
-Uploads rendered videos to YouTube using the YouTube Data API v3.
-Handles both long-form videos and Shorts.
+Uploads rendered videos to YouTube using the official Google API client library.
 Requires: YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN as env vars.
 """
 
 import json
 import os
 import sys
-import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
 
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
 
-TOKEN_URL = "https://oauth2.googleapis.com/token"
-YT_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
-YT_API_BASE = "https://www.googleapis.com/youtube/v3"
 
-
-def get_access_token() -> str:
+def get_youtube_client():
     client_id = os.environ["YOUTUBE_CLIENT_ID"]
     client_secret = os.environ["YOUTUBE_CLIENT_SECRET"]
     refresh_token = os.environ["YOUTUBE_REFRESH_TOKEN"]
 
-    resp = requests.post(TOKEN_URL, data={
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token",
-    }, timeout=15)
-    if not resp.ok:
-        print(f"Token error {resp.status_code}: {resp.text}")
-        resp.raise_for_status()
-    return resp.json()["access_token"]
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=["https://www.googleapis.com/auth/youtube"],
+    )
+    return build("youtube", "v3", credentials=creds)
 
 
 def upload_video(
-    access_token: str,
+    youtube,
     video_path: str,
     title: str,
     description: str,
-    tags: list[str],
+    tags: list,
     is_shorts: bool = False,
-    schedule_time: str = None,
 ) -> str:
-    headers = {"Authorization": f"Bearer {access_token}"}
-
-    category_id = "22"  # People & Blogs (good for finance content)
-    privacy = "private" if schedule_time else "public"
-
-    snippet = {
-        "title": title[:100],
-        "description": description[:5000],
-        "tags": tags[:500],
-        "categoryId": category_id,
-        "defaultLanguage": "en",
+    body = {
+        "snippet": {
+            "title": title[:100],
+            "description": description[:5000],
+            "tags": tags[:500],
+            "categoryId": "22",
+            "defaultLanguage": "en",
+        },
+        "status": {
+            "privacyStatus": "public",
+            "selfDeclaredMadeForKids": False,
+        },
     }
 
-    status = {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}
-    if schedule_time:
-        status["privacyStatus"] = "private"
-        status["publishAt"] = schedule_time
-
-    metadata = json.dumps({"snippet": snippet, "status": status}).encode()
-
-    # Resumable upload
-    init_resp = requests.post(
-        YT_UPLOAD_URL,
-        params={"uploadType": "resumable", "part": "snippet,status"},
-        headers={
-            **headers,
-            "Content-Type": "application/json; charset=UTF-8",
-            "X-Upload-Content-Type": "video/mp4",
-            "X-Upload-Content-Length": str(os.path.getsize(video_path)),
-        },
-        data=metadata,
-        timeout=30,
+    media = MediaFileUpload(
+        video_path,
+        mimetype="video/mp4",
+        resumable=True,
+        chunksize=5 * 1024 * 1024,
     )
-    init_resp.raise_for_status()
-    upload_url = init_resp.headers["Location"]
 
-    # Upload file in chunks
-    chunk_size = 5 * 1024 * 1024  # 5MB chunks
-    file_size = os.path.getsize(video_path)
-    video_id = None
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=media,
+    )
 
-    with open(video_path, "rb") as f:
-        start = 0
-        while start < file_size:
-            chunk = f.read(chunk_size)
-            end = start + len(chunk) - 1
-            upload_resp = requests.put(
-                upload_url,
-                headers={
-                    "Content-Range": f"bytes {start}-{end}/{file_size}",
-                    "Content-Type": "video/mp4",
-                },
-                data=chunk,
-                timeout=120,
-            )
-            if upload_resp.status_code in (200, 201):
-                video_id = upload_resp.json()["id"]
-                break
-            elif upload_resp.status_code == 308:
-                start = int(upload_resp.headers.get("Range", f"bytes=0-{end}").split("-")[1]) + 1
-            else:
-                upload_resp.raise_for_status()
+    response = None
+    while response is None:
+        status, response = request.next_chunk()
+        if status:
+            print(f"  Upload progress: {int(status.progress() * 100)}%")
 
-    return video_id
-
-
-def add_thumbnail(access_token: str, video_id: str, thumbnail_path: str):
-    if not os.path.exists(thumbnail_path):
-        return
-    headers = {"Authorization": f"Bearer {access_token}"}
-    with open(thumbnail_path, "rb") as f:
-        resp = requests.post(
-            f"{YT_API_BASE}/thumbnails/set",
-            params={"videoId": video_id},
-            headers={**headers, "Content-Type": "image/jpeg"},
-            data=f.read(),
-            timeout=30,
-        )
-    if resp.status_code == 200:
-        print(f"  Thumbnail set for {video_id}")
+    return response["id"]
 
 
 def main():
@@ -136,53 +86,59 @@ def main():
         content = json.load(f)
 
     meta = content["meta"]
-    access_token = get_access_token()
+    tags = meta["tags"] if isinstance(meta["tags"], list) else meta["tags"].split(",")
+
+    print("Connecting to YouTube API...")
+    youtube = get_youtube_client()
 
     results = {}
 
     # Upload long-form video
     longform_path = "output/longform.mp4"
     if os.path.exists(longform_path):
-        print(f"Uploading long-form video: {meta['title']}")
-        video_id = upload_video(
-            access_token=access_token,
-            video_path=longform_path,
-            title=meta["title"],
-            description=meta["description"],
-            tags=meta["tags"] if isinstance(meta["tags"], list) else meta["tags"].split(","),
-        )
-        print(f"  Uploaded: https://youtu.be/{video_id}")
-        results["longform_id"] = video_id
-
-        # Set thumbnail if exists
-        add_thumbnail(access_token, video_id, "output/thumbnail.jpg")
+        print(f"Uploading long-form: {meta['title']}")
+        try:
+            video_id = upload_video(
+                youtube=youtube,
+                video_path=longform_path,
+                title=meta["title"],
+                description=meta["description"],
+                tags=tags,
+            )
+            print(f"  Uploaded: https://youtu.be/{video_id}")
+            results["longform_id"] = video_id
+        except HttpError as e:
+            print(f"  Upload error: {e}")
     else:
         print("WARNING: longform.mp4 not found, skipping")
 
     # Upload Shorts
     shorts_path = "output/shorts.mp4"
     if os.path.exists(shorts_path):
-        shorts_title = meta.get("shorts_title", meta["title"][:50] + " #Shorts")
+        shorts_title = meta.get("shorts_title", meta["title"][:50])
         if "#Shorts" not in shorts_title:
             shorts_title = f"{shorts_title} #Shorts"
         print(f"Uploading Short: {shorts_title}")
-        shorts_id = upload_video(
-            access_token=access_token,
-            video_path=shorts_path,
-            title=shorts_title,
-            description=f"{meta['description']}\n\n#Shorts #Forex #COT",
-            tags=(meta["tags"] if isinstance(meta["tags"], list) else meta["tags"].split(",")) + ["Shorts"],
-            is_shorts=True,
-        )
-        print(f"  Uploaded Short: https://youtu.be/{shorts_id}")
-        results["shorts_id"] = shorts_id
+        try:
+            shorts_id = upload_video(
+                youtube=youtube,
+                video_path=shorts_path,
+                title=shorts_title,
+                description=f"{meta['description']}\n\n#Shorts #Forex #COT",
+                tags=tags + ["Shorts"],
+                is_shorts=True,
+            )
+            print(f"  Uploaded Short: https://youtu.be/{shorts_id}")
+            results["shorts_id"] = shorts_id
+        except HttpError as e:
+            print(f"  Short upload error: {e}")
     else:
         print("WARNING: shorts.mp4 not found, skipping")
 
     with open("data/upload_results.json", "w") as f:
         json.dump({"uploaded_at": datetime.utcnow().isoformat(), **results}, f, indent=2)
 
-    print("\nAll uploads complete.")
+    print("\nDone.")
 
 
 if __name__ == "__main__":

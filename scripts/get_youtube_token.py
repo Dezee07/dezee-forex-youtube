@@ -3,18 +3,12 @@ Run this ONCE locally to get your YouTube refresh token.
 After running, copy the refresh_token into your GitHub secret YOUTUBE_REFRESH_TOKEN.
 
 Usage:
-  pip install google-auth-oauthlib
+  pip install google-auth-oauthlib google-api-python-client
   python scripts/get_youtube_token.py
 """
 
 import json
-import os
-
-try:
-    from google_auth_oauthlib.flow import InstalledAppFlow
-except ImportError:
-    print("Run: pip install google-auth-oauthlib")
-    raise
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
@@ -25,14 +19,14 @@ client_config = {
     "installed": {
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
-        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"],
+        "redirect_uris": ["http://localhost"],
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         "token_uri": "https://oauth2.googleapis.com/token",
     }
 }
 
 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-creds = flow.run_local_server(port=0)
+creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
 
 print("\n=== YOUR TOKENS ===")
 print(f"YOUTUBE_CLIENT_ID={CLIENT_ID}")
