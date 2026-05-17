@@ -16,7 +16,7 @@ except ImportError:
     print("Run: pip install google-auth-oauthlib")
     raise
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
 CLIENT_ID = input("Paste your YouTube OAuth Client ID: ").strip()
 CLIENT_SECRET = input("Paste your YouTube OAuth Client Secret: ").strip()

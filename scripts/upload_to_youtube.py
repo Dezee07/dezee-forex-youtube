@@ -28,7 +28,9 @@ def get_access_token() -> str:
         "refresh_token": refresh_token,
         "grant_type": "refresh_token",
     }, timeout=15)
-    resp.raise_for_status()
+    if not resp.ok:
+        print(f"Token error {resp.status_code}: {resp.text}")
+        resp.raise_for_status()
     return resp.json()["access_token"]
 
 
