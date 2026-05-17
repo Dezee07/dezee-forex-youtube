@@ -119,6 +119,19 @@ def main():
     else:
         print("WARNING: shorts.mp4 not found")
 
+    # Set thumbnail on long-form video
+    if "longform_id" in results and os.path.exists("output/thumbnail.jpg"):
+        print("Setting thumbnail...")
+        try:
+            thumb = MediaFileUpload("output/thumbnail.jpg", mimetype="image/jpeg")
+            youtube.thumbnails().set(
+                videoId=results["longform_id"],
+                media_body=thumb,
+            ).execute()
+            print("  Thumbnail set.")
+        except HttpError as e:
+            print(f"  Thumbnail error: {e}")
+
     with open("data/upload_results.json", "w") as f:
         json.dump({"uploaded_at": datetime.utcnow().isoformat(), **results}, f, indent=2)
 

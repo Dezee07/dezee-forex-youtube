@@ -1,6 +1,6 @@
 """
 Generates a YouTube video script using Claude API based on latest COT data.
-Produces both a long-form video script and a 60-second Shorts script.
+All content is in professional English.
 """
 
 import anthropic
@@ -8,7 +8,6 @@ import json
 import os
 import sys
 from datetime import datetime
-from pathlib import Path
 
 
 def load_cot_data() -> dict:
@@ -17,18 +16,12 @@ def load_cot_data() -> dict:
 
 
 def pick_featured_pairs(cot_data: dict, count: int = 3) -> list:
-    """Pick pairs with most extreme/interesting COT positioning."""
     pairs = cot_data["pairs"]
-    # Sort by: extreme positioning first, then by absolute spec net change
-    pairs_sorted = sorted(
+    return sorted(
         pairs,
-        key=lambda p: (
-            int(p["extreme_positioning"]),
-            abs(p.get("spec_net_change", 0)),
-        ),
+        key=lambda p: (int(p["extreme_positioning"]), abs(p.get("spec_net_change", 0))),
         reverse=True,
-    )
-    return pairs_sorted[:count]
+    )[:count]
 
 
 def build_cot_summary(pairs: list) -> str:
@@ -36,58 +29,75 @@ def build_cot_summary(pairs: list) -> str:
     for p in pairs:
         direction = "CROWDED LONG" if p["spec_net"] > 0 else "CROWDED SHORT"
         lines.append(
-            f"- {p['pair']}: Retail speculators are {direction} "
-            f"(net {p['spec_net']:+,}, changed {p.get('spec_net_change', 0):+,} this week). "
-            f"COT contrarian bias: {p['contrarian_bias']}. "
+            f"- {p['pair']}: Speculators are {direction} "
+            f"(net {p['spec_net']:+,}, change this week: {p.get('spec_net_change', 0):+,}). "
+            f"Contrarian signal: {p['contrarian_bias']}. "
             f"Extreme positioning: {'YES' if p['extreme_positioning'] else 'No'}."
         )
     return "\n".join(lines)
 
 
 def generate_longform_script(client: anthropic.Anthropic, cot_summary: str, report_date: str) -> str:
-    prompt = f"""You are Dezee, a sharp young forex trader from Lagos who trades the COT (Commitment of Traders) contrarian strategy.
-Your YouTube channel teaches retail traders to follow what the BIG MONEY (commercials/banks) is doing — and FADE the crowd.
+    prompt = f"""You are a professional forex trading educator who specialises in the COT (Commitment of Traders) contrarian strategy.
+You run a YouTube channel that teaches traders how to read institutional positioning and trade against the retail crowd.
 
-Today's COT data (report date: {report_date}):
+IMPORTANT: Write ONLY in clear, professional English. No slang, no pidgin, no regional dialect.
+
+Today's COT data (CFTC report date: {report_date}):
 {cot_summary}
 
-Write a compelling YouTube video script (5-7 minutes when read aloud, ~800-1000 words).
+Write a compelling, well-structured YouTube video script (5-7 minutes when read aloud, approximately 900 words).
 
-Structure:
-1. HOOK (15 sec) — shocking stat or question about what retail traders are doing wrong RIGHT NOW
-2. INTRO (30 sec) — who you are, what COT is, why it matters
-3. COT BREAKDOWN (3-4 min) — go through each pair, explain what retail is doing, what the contrarian trade setup looks like, key levels to watch
-4. THE EDGE (1 min) — explain WHY fading the crowd works, reference commercial hedgers as the "smart money"
-5. OUTRO + CTA (30 sec) — subscribe, join the Telegram signal group, like the video
+FORMAT:
+[HOOK] (15 seconds)
+- Open with a powerful, specific statistic about what retail traders are doing wrong this week
+- Example: "Right now, retail traders are sitting on their most crowded long position in EUR/USD in 6 months — and historically, that is a sell signal."
 
-Tone: energetic, confident, educational, slightly street/Lagos flavour but professional. No unnecessary fluff.
-Use specific numbers from the COT data. Make it feel EXCLUSIVE — like insider knowledge.
-Format with clear section labels."""
+[INTRO] (30 seconds)
+- Brief, confident introduction: who you are, what the COT report is, why it gives you an edge over 95% of retail traders
+
+[COT BREAKDOWN] (3-4 minutes)
+- Cover each featured currency pair in detail
+- State the exact speculator net position and weekly change
+- Explain what this positioning means: who is crowded, who is on the other side (commercials/smart money)
+- Give the contrarian trade direction and what price levels to watch
+- Use specific numbers from the data
+
+[THE SMART MONEY EDGE] (1 minute)
+- Explain the commercial hedger vs speculator dynamic
+- Why fading extreme retail positioning has a statistical edge
+- Keep this educational and grounded in logic
+
+[CALL TO ACTION] (30 seconds)
+- Ask viewers to subscribe, like, and comment their thoughts on the pairs covered
+- Mention a Telegram signal group for live trade alerts
+
+Tone: Confident, analytical, educational. Like a professional fund manager teaching a masterclass — not hype, not entertainment. Pure value."""
 
     message = client.messages.create(
         model="claude-opus-4-7",
-        max_tokens=2000,
+        max_tokens=2500,
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
 
 
 def generate_shorts_script(client: anthropic.Anthropic, cot_summary: str, report_date: str) -> str:
-    prompt = f"""You are Dezee, a forex trader from Lagos who trades COT contrarian strategy.
+    prompt = f"""You are a professional forex educator specialising in COT analysis.
 
-Today's COT data (report: {report_date}):
+IMPORTANT: Write ONLY in clear, professional English.
+
+COT data (report: {report_date}):
 {cot_summary}
 
-Write a punchy 60-second YouTube Shorts script.
-Pick the SINGLE most interesting pair from the data.
+Write a punchy 60-second YouTube Shorts script. Pick the single most interesting pair.
 
-Structure:
-- Line 1: Hook question (e.g. "Is retail WRONG about EUR/USD again?")
-- Lines 2-4: Quick COT stat — what retail is doing, what that means
-- Line 5: The contrarian trade direction
-- Line 6: CTA ("Follow for daily COT signals")
+FORMAT:
+Line 1: Hook — one powerful question or statement (e.g. "Retail traders are more bullish on the Euro than they have been all year. Here is why that is actually a sell signal.")
+Lines 2-5: Quick COT breakdown — what retail is doing, what the numbers say, what the smart money trade is
+Line 6: Call to action ("Subscribe for daily COT analysis")
 
-Keep it under 120 words. Fast-paced, confident, no filler words."""
+Under 120 words. Confident and professional. No hype words."""
 
     message = client.messages.create(
         model="claude-opus-4-7",
@@ -97,29 +107,30 @@ Keep it under 120 words. Fast-paced, confident, no filler words."""
     return message.content[0].text
 
 
-def generate_title_and_description(client: anthropic.Anthropic, cot_summary: str, report_date: str) -> dict:
-    prompt = f"""Based on this COT forex data for {report_date}:
+def generate_meta(client: anthropic.Anthropic, cot_summary: str, report_date: str) -> dict:
+    prompt = f"""Based on this COT forex analysis for week of {report_date}:
 {cot_summary}
 
-Generate:
-1. A YouTube video title (max 60 chars, SEO-optimised, curiosity-driven, includes "COT" or "Commitment of Traders")
-2. A YouTube description (150-200 words, includes keywords: COT strategy, forex trading, commitment of traders, smart money, forex signals)
-3. 10 YouTube tags (comma-separated)
-4. A YouTube Shorts title (max 50 chars, punchy)
+Generate the following in JSON format:
+1. "title": YouTube video title (max 65 characters, SEO-optimised, professional, includes "COT" — no clickbait)
+2. "description": YouTube description (200 words, includes keywords: COT report, commitment of traders, forex trading strategy, smart money forex, institutional forex)
+3. "tags": list of 15 YouTube tags as an array
+4. "shorts_title": YouTube Shorts title (max 55 characters, ends with #Shorts)
+5. "thumbnail_headline": 4-6 word bold headline for the video thumbnail (e.g. "BANKS ARE SELLING THE EURO")
+6. "thumbnail_subtext": 1 short line for thumbnail subtext (e.g. "COT Report Analysis | Week of May 17")
 
-Return as JSON with keys: title, description, tags, shorts_title"""
+Return valid JSON only, no markdown."""
 
     message = client.messages.create(
         model="claude-opus-4-7",
-        max_tokens=600,
+        max_tokens=800,
         messages=[{"role": "user", "content": prompt}],
     )
-    text = message.content[0].text
-    # Extract JSON block if wrapped in markdown
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0].strip()
-    elif "```" in text:
+    text = message.content[0].text.strip()
+    if "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
     return json.loads(text)
 
 
@@ -144,8 +155,8 @@ def main():
     print("Generating Shorts script...")
     shorts = generate_shorts_script(client, cot_summary, report_date)
 
-    print("Generating titles and descriptions...")
-    meta = generate_title_and_description(client, cot_summary, report_date)
+    print("Generating titles, description, tags...")
+    meta = generate_meta(client, cot_summary, report_date)
 
     output = {
         "generated_at": datetime.utcnow().isoformat(),
@@ -159,8 +170,8 @@ def main():
     with open("data/video_content.json", "w") as f:
         json.dump(output, f, indent=2)
 
-    print(f"\nVideo title: {meta.get('title', 'N/A')}")
-    print(f"Shorts title: {meta.get('shorts_title', 'N/A')}")
+    print(f"\nTitle: {meta.get('title')}")
+    print(f"Thumbnail: {meta.get('thumbnail_headline')}")
     print("Saved to data/video_content.json")
 
 
