@@ -289,7 +289,7 @@ def generate_voiceover(text: str, path: str) -> bool:
         headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
         payload = {
             "text": text[:4500],
-            "model_id": "eleven_monolingual_v1",
+            "model_id": "eleven_turbo_v2_5",
             "voice_settings": {"stability": 0.6, "similarity_boost": 0.8},
         }
         resp = requests.post(f"{ELEVENLABS}/text-to-speech/{voice_id}",
@@ -368,7 +368,8 @@ def main():
     print("Rendering Short...")
     short_audio = "assets/audio/shorts_vo.mp3"
     generate_voiceover(content["shorts_script"], short_audio)
-    shorts_slides   = [title_slide, pair_slides[0], outro_slide]
+    best_pair = pair_slides[0] if pair_slides else title_slide
+    shorts_slides    = [title_slide, best_pair, outro_slide]
     shorts_durations = [4, 12, 4]
     render_video(shorts_slides, shorts_durations, short_audio, "output/shorts.mp4")
 
