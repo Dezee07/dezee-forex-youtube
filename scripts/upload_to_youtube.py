@@ -1,6 +1,5 @@
 """
-Uploads rendered videos to YouTube using the official Google API client library.
-Requires: YOUTUBE_CREDENTIALS env var (JSON string with full OAuth credentials).
+Uploads 3 educational Shorts to YouTube daily.
 """
 
 import json
@@ -16,12 +15,7 @@ from googleapiclient.errors import HttpError
 
 
 def get_youtube_client():
-    creds_json = os.environ.get("YOUTUBE_CREDENTIALS")
-    if not creds_json:
-        print("ERROR: YOUTUBE_CREDENTIALS secret not set")
-        sys.exit(1)
-
-    info = json.loads(creds_json)
+    info = json.loads(os.environ["YOUTUBE_CREDENTIALS"])
     creds = Credentials(
         token=info.get("token"),
         refresh_token=info["refresh_token"],
@@ -30,22 +24,18 @@ def get_youtube_client():
         client_secret=info["client_secret"],
         scopes=info.get("scopes", ["https://www.googleapis.com/auth/youtube"]),
     )
-
-    # Refresh if expired
     if not creds.valid:
-        print("Refreshing credentials...")
         creds.refresh(Request())
-
     return build("youtube", "v3", credentials=creds)
 
 
-def upload_video(youtube, video_path: str, title: str, description: str, tags: list) -> str:
+def upload_short(youtube, video_path: str, title: str, description: str, tags: list) -> str:
     body = {
         "snippet": {
             "title": title[:100],
             "description": description[:5000],
-            "tags": [t.strip() for t in tags][:500],
-            "categoryId": "22",
+            "tags": [t.strip("#") for t in tags][:30],
+            "categoryId": "27",  # Education
             "defaultLanguage": "en",
         },
         "status": {
@@ -54,88 +44,67 @@ def upload_video(youtube, video_path: str, title: str, description: str, tags: l
         },
     }
 
-    media = MediaFileUpload(
-        video_path,
-        mimetype="video/mp4",
-        resumable=True,
-        chunksize=5 * 1024 * 1024,
-    )
-
-    request = youtube.videos().insert(
-        part="snippet,status",
-        body=body,
-        media_body=media,
-    )
+    media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=5*1024*1024)
+    req   = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
     while response is None:
-        status, response = request.next_chunk()
+        status, response = req.next_chunk()
         if status:
-            pct = int(status.progress() * 100)
-            print(f"  Upload {pct}%")
+            print(f"    {int(status.progress()*100)}%")
 
     return response["id"]
 
 
+def set_thumbnail(youtube, video_id: str, thumb_path: str):
+    if not os.path.exists(thumb_path):
+        return
+    try:
+        media = MediaFileUpload(thumb_path, mimetype="image/jpeg")
+        youtube.thumbnails().set(videoId=video_id, media_body=media).execute()
+        print(f"    Thumbnail set.")
+    except HttpError as e:
+        print(f"    Thumbnail error: {e}")
+
+
 def main():
+    if not os.environ.get("YOUTUBE_CREDENTIALS"):
+        print("ERROR: YOUTUBE_CREDENTIALS not set")
+        sys.exit(1)
+
     with open("data/video_content.json") as f:
         content = json.load(f)
 
-    meta = content["meta"]
-    tags = meta["tags"] if isinstance(meta["tags"], list) else [t.strip() for t in meta["tags"].split(",")]
-
-    print("Connecting to YouTube API...")
+    shorts = content["shorts"]
     youtube = get_youtube_client()
-    print("Connected.")
+    results = []
 
-    results = {}
+    for short in shorts:
+        idx       = short["index"]
+        vid_path  = f"output/short_{idx}.mp4"
+        thumb_path = f"output/thumb_{idx}.jpg"
 
-    longform_path = "output/longform.mp4"
-    if os.path.exists(longform_path):
-        print(f"Uploading: {meta['title']}")
+        if not os.path.exists(vid_path):
+            print(f"WARNING: {vid_path} not found, skipping")
+            continue
+
+        title   = short["title"]
+        caption = short["caption"]
+        tags    = short.get("hashtags", [])
+
+        print(f"\nUploading Short {idx}: {title}")
         try:
-            vid_id = upload_video(youtube, longform_path, meta["title"], meta["description"], tags)
-            print(f"  Done: https://youtu.be/{vid_id}")
-            results["longform_id"] = vid_id
+            vid_id = upload_short(youtube, vid_path, title, caption, tags)
+            print(f"  Uploaded: https://youtu.be/{vid_id}")
+            set_thumbnail(youtube, vid_id, thumb_path)
+            results.append({"index": idx, "topic": short["topic"], "video_id": vid_id})
         except HttpError as e:
             print(f"  Error: {e}")
-    else:
-        print("WARNING: longform.mp4 not found")
-
-    shorts_path = "output/shorts.mp4"
-    if os.path.exists(shorts_path):
-        shorts_title = meta.get("shorts_title", meta["title"][:50])
-        if "#Shorts" not in shorts_title:
-            shorts_title = f"{shorts_title} #Shorts"
-        print(f"Uploading Short: {shorts_title}")
-        try:
-            short_id = upload_video(youtube, shorts_path, shorts_title,
-                                    f"{meta['description']}\n\n#Shorts #Forex #COT",
-                                    tags + ["Shorts"])
-            print(f"  Done: https://youtu.be/{short_id}")
-            results["shorts_id"] = short_id
-        except HttpError as e:
-            print(f"  Error: {e}")
-    else:
-        print("WARNING: shorts.mp4 not found")
-
-    # Set thumbnail on long-form video
-    if "longform_id" in results and os.path.exists("output/thumbnail.jpg"):
-        print("Setting thumbnail...")
-        try:
-            thumb = MediaFileUpload("output/thumbnail.jpg", mimetype="image/jpeg")
-            youtube.thumbnails().set(
-                videoId=results["longform_id"],
-                media_body=thumb,
-            ).execute()
-            print("  Thumbnail set.")
-        except HttpError as e:
-            print(f"  Thumbnail error: {e}")
 
     with open("data/upload_results.json", "w") as f:
-        json.dump({"uploaded_at": datetime.utcnow().isoformat(), **results}, f, indent=2)
+        json.dump({"uploaded_at": datetime.utcnow().isoformat(), "videos": results}, f, indent=2)
 
-    print("\nAll done.")
+    print(f"\nDone. {len(results)}/{len(shorts)} Shorts uploaded.")
 
 
 if __name__ == "__main__":

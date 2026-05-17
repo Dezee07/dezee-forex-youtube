@@ -1,9 +1,6 @@
 """
-Renders a professional forex YouTube video and thumbnail.
-- Dark finance-style design with branded colors
-- Clean text slides with COT data visualised as bar charts
-- AI voiceover via ElevenLabs (fallback: gTTS)
-- Generates YouTube thumbnail image
+Renders 3 educational Shorts videos per day.
+Format: 1080x1920 vertical, dark trading style, bold text, male AI voiceover.
 """
 
 import json
@@ -12,368 +9,317 @@ import sys
 import textwrap
 import requests
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 try:
-    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
+    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
     MOVIEPY_OK = True
 except ImportError:
     MOVIEPY_OK = False
 
-# Brand colors
-BG_DARK      = (8, 12, 24)
-BG_CARD      = (16, 22, 42)
-GOLD         = (212, 175, 55)
-GREEN_BULL   = (0, 200, 100)
-RED_BEAR     = (220, 50, 50)
-WHITE        = (255, 255, 255)
-GREY         = (160, 170, 190)
-ACCENT_BLUE  = (30, 120, 220)
+# Brand colors — dark trading aesthetic
+BG          = (6, 8, 18)
+BG_CARD     = (14, 18, 36)
+GOLD        = (212, 175, 55)
+GREEN       = (0, 210, 100)
+RED         = (220, 45, 45)
+WHITE       = (255, 255, 255)
+GREY        = (150, 160, 180)
+ACCENT      = (30, 100, 220)
 
-W, H         = 1920, 1080
-SW, SH       = 1080, 1920   # Shorts dimensions
-FPS          = 24
-ELEVENLABS   = "https://api.elevenlabs.io/v1"
+SW, SH      = 1080, 1920
+FPS         = 24
+ELEVENLABS  = "https://api.elevenlabs.io/v1"
+# Josh — deep authoritative male voice
+VOICE_ID    = "TxGEqnHWrfWFTfGW9XjX"
 
 
 def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold
+            else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     ]
-    for path in candidates:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size)
+    for p in paths:
+        if os.path.exists(p):
+            return ImageFont.truetype(p, size)
     return ImageFont.load_default()
 
 
-def draw_rounded_rect(draw, xy, radius, fill):
+def draw_rrect(draw, xy, r, fill):
     x1, y1, x2, y2 = xy
-    draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill)
-    draw.rectangle([x1, y1 + radius, x2, y2 - radius], fill=fill)
-    draw.ellipse([x1, y1, x1 + 2*radius, y1 + 2*radius], fill=fill)
-    draw.ellipse([x2 - 2*radius, y1, x2, y1 + 2*radius], fill=fill)
-    draw.ellipse([x1, y2 - 2*radius, x1 + 2*radius, y2], fill=fill)
-    draw.ellipse([x2 - 2*radius, y2 - 2*radius, x2, y2], fill=fill)
+    draw.rectangle([x1+r, y1, x2-r, y2], fill=fill)
+    draw.rectangle([x1, y1+r, x2, y2-r], fill=fill)
+    for cx, cy in [(x1,y1),(x2-2*r,y1),(x1,y2-2*r),(x2-2*r,y2-2*r)]:
+        draw.ellipse([cx, cy, cx+2*r, cy+2*r], fill=fill)
 
 
-def make_title_slide(title: str, subtitle: str, date_str: str, w=W, h=H) -> np.ndarray:
-    img = Image.new("RGB", (w, h), BG_DARK)
+def make_hook_slide(hook: str, topic: str) -> np.ndarray:
+    img = Image.new("RGB", (SW, SH), BG)
     draw = ImageDraw.Draw(img)
 
     # Top gold bar
-    draw.rectangle([(0, 0), (w, 6)], fill=GOLD)
+    draw.rectangle([(0, 0), (SW, 8)], fill=GOLD)
 
-    # Channel name top-left
-    font_chan = load_font(32)
-    draw.text((60, 30), "DEZEE FOREX  |  COT ANALYSIS", font=font_chan, fill=GOLD)
+    # Channel tag
+    font_tag = load_font(36, bold=True)
+    draw.text((40, 30), "DEZEE FOREX", font=font_tag, fill=GOLD)
+    draw.text((SW - 280, 30), "COT Education", font=load_font(32), fill=GREY)
 
-    # Date top-right
-    draw.text((w - 340, 30), date_str, font=font_chan, fill=GREY)
+    # Topic pill
+    font_topic = load_font(34)
+    draw_rrect(draw, (40, 90, SW - 40, 155), 12, BG_CARD)
+    draw.text((60, 104), topic[:55], font=font_topic, fill=GREY)
 
-    # Large headline
-    font_title = load_font(96, bold=True)
-    font_sub   = load_font(48)
-
-    lines = textwrap.wrap(title.upper(), width=28)
-    y = 200
+    # Big hook text — center of screen
+    font_hook = load_font(78, bold=True)
+    lines = textwrap.wrap(hook, width=18)
+    total_h = len(lines) * 96
+    y = (SH // 2) - (total_h // 2) - 100
     for line in lines:
-        draw.text((60, y), line, font=font_title, fill=WHITE)
-        y += 110
+        draw.text((40, y), line, font=font_hook, fill=WHITE)
+        y += 96
 
-    # Gold divider
-    draw.rectangle([(60, y + 20), (300, y + 26)], fill=GOLD)
-
-    # Subtitle
-    y += 60
-    for line in textwrap.wrap(subtitle, width=55):
-        draw.text((60, y), line, font=font_sub, fill=GREY)
-        y += 58
+    # Red accent line under hook
+    draw.rectangle([(40, y + 20), (SW - 40, y + 28)], fill=RED)
 
     # Bottom bar
-    draw.rectangle([(0, h - 80), (w, h)], fill=BG_CARD)
-    font_sm = load_font(30)
-    draw.text((60, h - 55), "Subscribe for daily COT signals  •  @D.e.z.e.e", font=font_sm, fill=GOLD)
+    draw.rectangle([(0, SH - 100), (SW, SH)], fill=BG_CARD)
+    font_sm = load_font(32)
+    draw.text((40, SH - 72), "Follow for smart money education ↓", font=font_sm, fill=GOLD)
 
     return np.array(img)
 
 
-def make_pair_slide(pair: dict, w=W, h=H) -> np.ndarray:
-    img = Image.new("RGB", (w, h), BG_DARK)
+def make_content_slide(lines_text: list[str], highlight_color=WHITE, slide_num: int = 1, total: int = 3) -> np.ndarray:
+    img = Image.new("RGB", (SW, SH), BG)
     draw = ImageDraw.Draw(img)
 
-    # Top bar
-    draw.rectangle([(0, 0), (w, 6)], fill=GOLD)
+    draw.rectangle([(0, 0), (SW, 8)], fill=GOLD)
 
-    is_bearish = pair["contrarian_bias"] == "SHORT"
-    signal_color = RED_BEAR if is_bearish else GREEN_BULL
-    signal_label = "SELL SIGNAL" if is_bearish else "BUY SIGNAL"
+    font_body = load_font(58, bold=True)
+    font_sm   = load_font(34)
 
-    font_pair  = load_font(90, bold=True)
-    font_label = load_font(48, bold=True)
-    font_body  = load_font(40)
-    font_sm    = load_font(32)
-    font_chan  = load_font(28)
+    # Progress dots
+    dot_y = 40
+    for i in range(total):
+        color = GOLD if i < slide_num else GREY
+        draw.ellipse([(SW//2 - total*25 + i*50, dot_y),
+                      (SW//2 - total*25 + i*50 + 16, dot_y + 16)], fill=color)
 
-    # Pair name
-    draw.text((60, 30), pair["pair"], font=font_pair, fill=WHITE)
+    # Content text — centered vertically
+    wrapped = []
+    for line in lines_text:
+        wrapped.extend(textwrap.wrap(line, width=22))
+        wrapped.append("")
 
-    # Signal badge
-    badge_x = 60 + len(pair["pair"]) * 52 + 40
-    draw_rounded_rect(draw, (badge_x, 42, badge_x + 240, 110), 12, signal_color)
-    draw.text((badge_x + 20, 52), signal_label, font=font_label, fill=WHITE)
+    total_h = len(wrapped) * 76
+    y = max(120, (SH // 2) - (total_h // 2))
 
-    # Divider
-    draw.rectangle([(60, 130), (w - 60, 134)], fill=BG_CARD)
+    for line in wrapped:
+        if line == "":
+            y += 30
+            continue
+        # Highlight key words in gold
+        keywords = ["commercials", "institutions", "smart money", "retail", "banks",
+                    "COT", "contrarian", "extreme", "reversal", "trap"]
+        color = WHITE
+        for kw in keywords:
+            if kw.lower() in line.lower():
+                color = GOLD
+                break
+        draw.text((40, y), line, font=font_body, fill=color)
+        y += 76
 
-    # Stats cards
-    spec_net = pair["spec_net"]
-    spec_change = pair.get("spec_net_change", 0)
-    comm_net = pair.get("comm_net", 0)
-
-    cards = [
-        ("SPECULATOR NET", f"{spec_net:+,}", GREEN_BULL if spec_net > 0 else RED_BEAR),
-        ("WEEKLY CHANGE",  f"{spec_change:+,}", GREEN_BULL if spec_change > 0 else RED_BEAR),
-        ("COMMERCIAL NET", f"{comm_net:+,}", GREEN_BULL if comm_net > 0 else RED_BEAR),
-        ("EXTREME POS.",   "YES" if pair["extreme_positioning"] else "NO",
-         RED_BEAR if pair["extreme_positioning"] else GREEN_BULL),
-    ]
-
-    card_w = (w - 120 - 60) // 4
-    for i, (label, value, color) in enumerate(cards):
-        cx = 60 + i * (card_w + 20)
-        draw_rounded_rect(draw, (cx, 160, cx + card_w, 320), 16, BG_CARD)
-        draw.text((cx + 20, 175), label, font=font_sm, fill=GREY)
-        draw.text((cx + 20, 225), value, font=font_label, fill=color)
-
-    # COT positioning bar chart
-    bar_y = 360
-    draw.text((60, bar_y), "SPECULATOR POSITIONING", font=font_sm, fill=GREY)
-    bar_y += 40
-
-    long_pct  = pair.get("spec_pct_long", 50)
-    short_pct = pair.get("spec_pct_short", 50)
-    total = long_pct + short_pct if (long_pct + short_pct) > 0 else 100
-    bar_total_w = w - 120
-    long_bar_w = int(bar_total_w * long_pct / total)
-
-    draw.rectangle([(60, bar_y), (60 + long_bar_w, bar_y + 60)], fill=GREEN_BULL)
-    draw.rectangle([(60 + long_bar_w, bar_y), (60 + bar_total_w, bar_y + 60)], fill=RED_BEAR)
-    draw.text((70, bar_y + 12), f"LONG {long_pct:.1f}%", font=font_sm, fill=WHITE)
-    draw.text((60 + bar_total_w - 200, bar_y + 12), f"SHORT {short_pct:.1f}%", font=font_sm, fill=WHITE)
-
-    # Analysis text
-    bar_y += 100
-    crowded = "CROWDED LONG — retail is overly bullish" if spec_net > 0 else "CROWDED SHORT — retail is overly bearish"
-    action = "Contrarian traders look to SELL into strength" if is_bearish else "Contrarian traders look to BUY into weakness"
-    smart = "Commercials (banks/hedgers) are positioned OPPOSITE to retail"
-
-    for line in [crowded, action, smart]:
-        draw.text((60, bar_y), f"• {line}", font=font_body, fill=WHITE)
-        bar_y += 60
-
-    # Extreme warning
-    if pair["extreme_positioning"]:
-        bar_y += 10
-        draw_rounded_rect(draw, (60, bar_y, w - 60, bar_y + 70), 12, (60, 20, 20))
-        draw.text((80, bar_y + 15), "⚠  EXTREME POSITIONING ALERT — Highest probability contrarian setup", font=font_body, fill=GOLD)
-
-    # Bottom bar
-    draw.rectangle([(0, h - 80), (w, h)], fill=BG_CARD)
-    draw.text((60, h - 55), "DEZEE FOREX  •  @D.e.z.e.e  •  Subscribe for daily COT signals", font=font_chan, fill=GOLD)
+    # Bottom
+    draw.rectangle([(0, SH - 100), (SW, SH)], fill=BG_CARD)
+    draw.text((40, SH - 72), "@D.e.z.e.e  •  COT Smart Money", font=font_sm, fill=GOLD)
 
     return np.array(img)
 
 
-def make_outro_slide(w=W, h=H) -> np.ndarray:
-    img = Image.new("RGB", (w, h), BG_DARK)
+def make_cta_slide(cta: str) -> np.ndarray:
+    img = Image.new("RGB", (SW, SH), BG)
     draw = ImageDraw.Draw(img)
 
-    draw.rectangle([(0, 0), (w, 6)], fill=GOLD)
+    draw.rectangle([(0, 0), (SW, 8)], fill=GOLD)
 
-    font_big = load_font(88, bold=True)
+    font_big = load_font(82, bold=True)
+    font_med = load_font(54)
+    font_sm  = load_font(38)
+
+    # Central CTA
+    y = SH // 2 - 220
+    draw.text((40, y), "FOUND THIS\nUSEFUL?", font=font_big, fill=WHITE)
+    y += 220
+
+    draw.rectangle([(40, y), (SW - 40, y + 8)], fill=GOLD)
+    y += 40
+
+    for line in textwrap.wrap(cta, width=26):
+        draw.text((40, y), line, font=font_med, fill=GREY)
+        y += 70
+
+    y += 20
+    draw_rrect(draw, (40, y, SW - 40, y + 100), 16, GOLD)
+    draw.text((SW//2 - 140, y + 22), "SUBSCRIBE NOW", font=font_sm, fill=BG)
+
+    draw.rectangle([(0, SH - 100), (SW, SH)], fill=BG_CARD)
+    draw.text((40, SH - 72), "@D.e.z.e.e  •  New video every day", font=font_sm, fill=GOLD)
+
+    return np.array(img)
+
+
+def make_thumbnail(short: dict, out_path: str):
+    img = Image.new("RGB", (SW, SH), BG)
+    draw = ImageDraw.Draw(img)
+
+    draw.rectangle([(0, 0), (SW, 10)], fill=GOLD)
+    draw.rectangle([(0, SH - 10), (SW, SH)], fill=GOLD)
+
+    font_big = load_font(90, bold=True)
     font_med = load_font(52)
     font_sm  = load_font(38)
 
-    draw.text((60, 120), "FOUND THIS USEFUL?", font=font_big, fill=WHITE)
-    draw.rectangle([(60, 240), (400, 246)], fill=GOLD)
+    # Hook as headline
+    hook_lines = textwrap.wrap(short.get("script", "").split("\n")[0], width=16)
+    y = 160
+    for line in hook_lines[:4]:
+        draw.text((40, y), line, font=font_big, fill=WHITE)
+        y += 106
 
-    items = [
-        "SUBSCRIBE for weekly COT analysis every Monday",
-        "LIKE the video — it helps the algorithm show this to more traders",
-        "COMMENT your thoughts on any of these pairs",
-        "JOIN the Telegram group for live trade alerts",
-    ]
-    y = 280
-    for item in items:
-        draw.text((60, y), f"→  {item}", font=font_med, fill=GREY)
-        y += 80
+    draw.rectangle([(40, y + 20), (SW - 40, y + 28)], fill=RED)
 
-    draw.rectangle([(60, y + 20), (w - 60, y + 26)], fill=BG_CARD)
+    # Topic tag
+    y += 60
+    draw_rrect(draw, (40, y, SW - 40, y + 90), 14, BG_CARD)
+    draw.text((60, y + 18), short["topic"][:40], font=font_med, fill=GOLD)
 
-    draw.text((60, y + 50), "Next COT report drops every Friday.", font=font_sm, fill=GOLD)
-    draw.text((60, y + 100), "Trade the smart money. Not the crowd.", font=font_sm, fill=WHITE)
+    # Channel
+    y_bot = SH - 200
+    draw_rrect(draw, (40, y_bot, 380, y_bot + 80), 14, GOLD)
+    draw.text((60, y_bot + 14), "DEZEE FOREX", font=font_sm, fill=BG)
+    draw.text((40, y_bot + 100), "COT Smart Money Education", font=font_sm, fill=GREY)
 
-    draw.rectangle([(0, h - 80), (w, h)], fill=BG_CARD)
-    font_chan = load_font(28)
-    draw.text((60, h - 55), "DEZEE FOREX  •  @D.e.z.e.e  •  COT Contrarian Strategy", font=font_chan, fill=GOLD)
-
-    return np.array(img)
+    img.save(out_path, "JPEG", quality=95)
+    print(f"  Thumbnail: {out_path}")
 
 
-def make_thumbnail(meta: dict, pairs: list, w=1280, h=720) -> str:
-    img = Image.new("RGB", (w, h), BG_DARK)
-    draw = ImageDraw.Draw(img)
-
-    # Left gold stripe
-    draw.rectangle([(0, 0), (12, h)], fill=GOLD)
-
-    # Background card right side
-    draw_rounded_rect(draw, (w // 2, 40, w - 40, h - 40), 20, BG_CARD)
-
-    font_headline = load_font(88, bold=True)
-    font_sub      = load_font(42)
-    font_sm       = load_font(34)
-    font_tag      = load_font(36, bold=True)
-
-    # Main headline (left side)
-    headline = meta.get("thumbnail_headline", "SMART MONEY EXPOSED").upper()
-    lines = textwrap.wrap(headline, width=14)
-    y = 80
-    for line in lines:
-        draw.text((40, y), line, font=font_headline, fill=WHITE)
-        y += 100
-
-    # Gold underline
-    draw.rectangle([(40, y + 10), (360, y + 18)], fill=GOLD)
-
-    # Subtext
-    subtext = meta.get("thumbnail_subtext", "COT Report Analysis")
-    draw.text((40, y + 40), subtext, font=font_sub, fill=GREY)
-
-    # Right side: pair signal cards
-    card_x = w // 2 + 30
-    card_y = 80
-    for pair in pairs[:3]:
-        is_sell = pair["contrarian_bias"] == "SHORT"
-        color = RED_BEAR if is_sell else GREEN_BULL
-        label = "SELL" if is_sell else "BUY"
-        draw_rounded_rect(draw, (card_x, card_y, w - 60, card_y + 90), 14, color)
-        draw.text((card_x + 20, card_y + 8), pair["pair"], font=font_tag, fill=WHITE)
-        draw.text((card_x + 20, card_y + 46), f"{label}  •  Net {pair['spec_net']:+,}", font=font_sm, fill=WHITE)
-        card_y += 110
-
-    # COT badge bottom left
-    draw_rounded_rect(draw, (40, h - 100, 310, h - 30), 12, GOLD)
-    draw.text((60, h - 86), "COT ANALYSIS", font=font_tag, fill=BG_DARK)
-
-    # Channel name
-    draw.text((w - 340, h - 55), "@D.e.z.e.e", font=font_sub, fill=GOLD)
-
-    path = "output/thumbnail.jpg"
-    img.save(path, "JPEG", quality=95)
-    print(f"Thumbnail saved: {path}")
-    return path
-
-
-def generate_voiceover(text: str, path: str) -> bool:
+def generate_voiceover(text: str, out_path: str) -> bool:
     api_key = os.environ.get("ELEVENLABS_API_KEY", "")
-    # Use a professional male English voice
-    voice_id = "TxGEqnHWrfWFTfGW9XjX"  # Josh — deep, authoritative
-
     if api_key:
         headers = {"xi-api-key": api_key, "Content-Type": "application/json"}
-        payload = {
-            "text": text[:4500],
-            "model_id": "eleven_turbo_v2_5",
-            "voice_settings": {"stability": 0.6, "similarity_boost": 0.8},
-        }
-        resp = requests.post(f"{ELEVENLABS}/text-to-speech/{voice_id}",
-                             headers=headers, json=payload, timeout=90)
-        if resp.status_code == 200:
-            with open(path, "wb") as f:
-                f.write(resp.content)
-            print(f"ElevenLabs voiceover: {path}")
-            return True
-        else:
-            print(f"ElevenLabs error {resp.status_code}: {resp.text[:300]}")
+        for model in ["eleven_turbo_v2_5", "eleven_turbo_v2", "eleven_multilingual_v2"]:
+            payload = {
+                "text": text,
+                "model_id": model,
+                "voice_settings": {"stability": 0.55, "similarity_boost": 0.80, "style": 0.2},
+            }
+            resp = requests.post(f"{ELEVENLABS}/text-to-speech/{VOICE_ID}",
+                                 headers=headers, json=payload, timeout=60)
+            if resp.status_code == 200:
+                with open(out_path, "wb") as f:
+                    f.write(resp.content)
+                print(f"  ElevenLabs voiceover ({model}): {out_path}")
+                return True
+            else:
+                print(f"  ElevenLabs {model} failed ({resp.status_code}), trying next...")
 
-    # Fallback: gTTS
+    # Fallback: gTTS male voice
     try:
         from gtts import gTTS
-        gTTS(text=text[:4500], lang="en", slow=False).save(path)
-        print(f"gTTS voiceover: {path}")
+        gTTS(text=text, lang="en", slow=False).save(out_path)
+        print(f"  gTTS voiceover: {out_path}")
         return True
     except Exception as e:
-        print(f"TTS failed: {e}")
+        print(f"  TTS failed: {e}")
         return False
 
 
-def render_video(slides_arrays: list, durations: list, audio_path: str, out_path: str):
+def split_script_into_slides(script: str) -> list[str]:
+    """Split a script into 3-4 slide chunks for the video."""
+    sentences = [s.strip() for s in script.replace("\n", " ").split(".") if s.strip()]
+    slides = []
+    chunk = []
+    for i, s in enumerate(sentences):
+        chunk.append(s + ".")
+        if len(chunk) >= 2 or i == len(sentences) - 1:
+            slides.append(" ".join(chunk))
+            chunk = []
+    return slides[:4] if slides else [script]
+
+
+def render_short(short: dict, output_dir: str, idx: int):
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs("assets/audio", exist_ok=True)
+
+    script = short["script"]
+    topic  = short["topic"]
+    cta_line = script.split(".")[-2] + "." if "." in script else "Follow for more."
+
+    # Generate voiceover
+    audio_path = f"assets/audio/short_{idx}.mp3"
+    print(f"  Generating voiceover...")
+    has_audio = generate_voiceover(script, audio_path)
+
+    # Build slides
+    script_slides = split_script_into_slides(script)
+    hook_text = script_slides[0] if script_slides else short["topic"]
+
+    slides_data = [make_hook_slide(hook_text, topic)]
+    for i, chunk in enumerate(script_slides[1:], 1):
+        slides_data.append(make_content_slide([chunk], slide_num=i, total=len(script_slides)))
+    slides_data.append(make_cta_slide(cta_line))
+
+    # Durations
+    total_dur = 55  # target 55 seconds
+    hook_dur  = 5
+    cta_dur   = 8
+    mid_dur   = max(4, (total_dur - hook_dur - cta_dur) // max(len(slides_data) - 2, 1))
+    durations = [hook_dur] + [mid_dur] * (len(slides_data) - 2) + [cta_dur]
+
+    # Render
+    clips = [ImageClip(arr, duration=dur) for arr, dur in zip(slides_data, durations)]
+    video = concatenate_videoclips(clips, method="compose")
+
+    if has_audio and os.path.exists(audio_path):
+        audio = AudioFileClip(audio_path)
+        dur   = min(audio.duration, video.duration)
+        video = video.subclip(0, dur).set_audio(audio.subclip(0, dur))
+
+    out_path = f"{output_dir}/short_{idx}.mp4"
+    video.write_videofile(out_path, fps=FPS, codec="libx264", audio_codec="aac",
+                          threads=4, preset="fast", logger=None)
+    print(f"  Video: {out_path}")
+
+    # Thumbnail
+    make_thumbnail(short, f"{output_dir}/thumb_{idx}.jpg")
+
+    return out_path
+
+
+def main():
     if not MOVIEPY_OK:
         print("ERROR: moviepy not installed")
         sys.exit(1)
 
-    clips = [ImageClip(arr, duration=dur) for arr, dur in zip(slides_arrays, durations)]
-    video = concatenate_videoclips(clips, method="compose")
-
-    if os.path.exists(audio_path):
-        audio = AudioFileClip(audio_path)
-        dur = min(audio.duration, video.duration)
-        video = video.subclip(0, dur).set_audio(audio.subclip(0, dur))
-
-    os.makedirs("output", exist_ok=True)
-    video.write_videofile(out_path, fps=FPS, codec="libx264", audio_codec="aac",
-                          threads=4, preset="fast", logger=None)
-    print(f"Video rendered: {out_path}")
-
-
-def main():
     with open("data/video_content.json") as f:
         content = json.load(f)
 
-    meta = content["meta"]
-    pairs = content["featured_pairs"]
-    script = content["longform_script"]
-    date_str = f"Week of {content['report_date']}"
+    shorts = content["shorts"]
+    print(f"Rendering {len(shorts)} Shorts...")
 
     os.makedirs("output", exist_ok=True)
-    os.makedirs("assets/audio", exist_ok=True)
+    paths = []
+    for i, short in enumerate(shorts, 1):
+        print(f"\n--- Short {i}/{len(shorts)}: {short['topic']} ---")
+        path = render_short(short, "output", i)
+        paths.append(path)
 
-    # Generate thumbnail
-    make_thumbnail(meta, pairs)
-
-    # Generate voiceover
-    audio_path = "assets/audio/voiceover.mp3"
-    print("Generating voiceover...")
-    generate_voiceover(script, audio_path)
-
-    # Build slides
-    title_slide = make_title_slide(meta["title"], meta.get("thumbnail_subtext", "COT Contrarian Analysis"), date_str)
-    pair_slides  = [make_pair_slide(p) for p in pairs]
-    outro_slide  = make_outro_slide()
-
-    slides   = [title_slide] + pair_slides + [outro_slide]
-    # Title 6s, each pair 15s, outro 8s
-    durations = [6] + [15] * len(pair_slides) + [8]
-
-    print("Rendering long-form video...")
-    render_video(slides, durations, audio_path, "output/longform.mp4")
-
-    # Shorts: title + best pair only (vertical crop simulation using same images)
-    print("Rendering Short...")
-    short_audio = "assets/audio/shorts_vo.mp3"
-    generate_voiceover(content["shorts_script"], short_audio)
-    best_pair = pair_slides[0] if pair_slides else title_slide
-    shorts_slides    = [title_slide, best_pair, outro_slide]
-    shorts_durations = [4, 12, 4]
-    render_video(shorts_slides, shorts_durations, short_audio, "output/shorts.mp4")
-
-    print("\nAll rendering complete.")
+    print(f"\nAll {len(paths)} Shorts rendered.")
 
 
 if __name__ == "__main__":
