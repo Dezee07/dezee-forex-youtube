@@ -1,6 +1,6 @@
 """
-Run this ONCE locally to get your YouTube refresh token.
-After running, copy the refresh_token into your GitHub secret YOUTUBE_REFRESH_TOKEN.
+Run this ONCE locally to get your YouTube credentials JSON.
+Paste the entire JSON output as the YOUTUBE_CREDENTIALS secret in GitHub.
 
 Usage:
   pip install google-auth-oauthlib google-api-python-client
@@ -26,10 +26,20 @@ client_config = {
 }
 
 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+creds = flow.run_local_server(port=8080, access_type="offline", prompt="consent")
 
-print("\n=== YOUR TOKENS ===")
-print(f"YOUTUBE_CLIENT_ID={CLIENT_ID}")
-print(f"YOUTUBE_CLIENT_SECRET={CLIENT_SECRET}")
-print(f"YOUTUBE_REFRESH_TOKEN={creds.refresh_token}")
-print("\nCopy these into your GitHub repo secrets.")
+credentials_json = {
+    "token": creds.token,
+    "refresh_token": creds.refresh_token,
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "client_id": CLIENT_ID,
+    "client_secret": CLIENT_SECRET,
+    "scopes": SCOPES,
+}
+
+output = json.dumps(credentials_json)
+
+print("\n=== COPY THIS ENTIRE LINE AS YOUR GITHUB SECRET ===")
+print(f"Secret name: YOUTUBE_CREDENTIALS")
+print(f"Secret value: {output}")
+print("\nAdd this as a single secret in GitHub Actions.")
