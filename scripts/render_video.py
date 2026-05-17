@@ -382,8 +382,14 @@ def render_short(short: dict, output_dir: str, idx: int):
     # Durations: 55 sec total target
     hook_d = 6
     cta_d  = 8
-    mid_d  = max(5, (55 - hook_d - cta_d) // max(len(slides_arrays) - 2, 1))
-    durations = [hook_d] + [mid_d] * (len(slides_arrays) - 2) + [cta_d]
+    n_mid  = max(len(slides_arrays) - 2, 0)
+    mid_d  = max(5, (55 - hook_d - cta_d) // max(n_mid, 1))
+    if len(slides_arrays) == 1:
+        durations = [55]
+    elif len(slides_arrays) == 2:
+        durations = [hook_d, cta_d]
+    else:
+        durations = [hook_d] + [mid_d] * n_mid + [cta_d]
 
     # Render video
     clips = [ImageClip(arr, duration=d) for arr, d in zip(slides_arrays, durations)]
@@ -417,11 +423,20 @@ def main():
     print(f"Rendering {len(shorts)} Shorts with AI backgrounds...")
     os.makedirs("output", exist_ok=True)
 
+    rendered = 0
     for i, short in enumerate(shorts, 1):
         print(f"\n--- Short {i}/{len(shorts)}: {short['topic']} ---")
-        render_short(short, "output", i)
+        try:
+            render_short(short, "output", i)
+            rendered += 1
+        except Exception as e:
+            print(f"  ERROR rendering Short {i}: {e}")
+            import traceback; traceback.print_exc()
 
-    print(f"\nAll {len(shorts)} Shorts rendered.")
+    if rendered == 0:
+        print("ERROR: No Shorts rendered — aborting.")
+        sys.exit(1)
+    print(f"\n{rendered}/{len(shorts)} Shorts rendered.")
 
 
 if __name__ == "__main__":

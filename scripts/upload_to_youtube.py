@@ -17,15 +17,14 @@ from googleapiclient.errors import HttpError
 def get_youtube_client():
     info = json.loads(os.environ["YOUTUBE_CREDENTIALS"])
     creds = Credentials(
-        token=info.get("token"),
+        token=None,  # force refresh — don't rely on the stored short-lived token
         refresh_token=info["refresh_token"],
         token_uri=info.get("token_uri", "https://oauth2.googleapis.com/token"),
         client_id=info["client_id"],
         client_secret=info["client_secret"],
         scopes=info.get("scopes", ["https://www.googleapis.com/auth/youtube"]),
     )
-    if not creds.valid:
-        creds.refresh(Request())
+    creds.refresh(Request())  # always refresh upfront so we have a valid token
     return build("youtube", "v3", credentials=creds)
 
 
